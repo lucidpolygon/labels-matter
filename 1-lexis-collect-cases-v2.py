@@ -41,26 +41,33 @@ def is_logged_in(page) -> bool:
     return page.locator("#userid").count() == 0
 
 def extract_results_from_table(page) -> list[dict]:
-    rows = page.locator("table[ln-table] tbody tr:not(.filter-row)")
-    rows.first.wait_for(state="visible", timeout=60_000)
+    # wait until at least one non-filter row exists OR table finished loading
+    page.wait_for_selector("table[ln-table] tbody tr:not(.filter-row)", timeout=90_000)
 
-    results = []
     allow_all_nature = len(ALLOW_NATURE) == 0
 
-    for i in range(rows.count()):
-        row = rows.nth(i)
-        tds = row.locator("td")
-        row.scroll_into_view_if_needed(timeout=60_000)
+    rows_data = page.evaluate("""
+    () => {
+      const rows = Array.from(document.querySelectorAll("table[ln-table] tbody tr:not(.filter-row)"));
+      return rows.map(r => Array.from(r.querySelectorAll("td")).map(td => (td.innerText || "").trim()));
+    }
+    """)
 
-        court        = tds.nth(2).inner_text().strip()
-        docket_no    = tds.nth(3).inner_text().strip()
-        defendant    = tds.nth(4).inner_text().strip()
-        case_name    = tds.nth(5).inner_text().strip()
-        nature_suit  = " ".join(tds.nth(6).inner_text().split())
-        cause        = tds.nth(7).inner_text().strip()
-        complaint    = " ".join(tds.nth(8).inner_text().split()).lower()
-        date_hit     = tds.nth(9).inner_text().strip()
-        date_filed   = tds.nth(10).inner_text().strip()
+    results = []
+    for cols in rows_data:
+        # expect at least 11 columns based on your indexing
+        if len(cols) < 11:
+            continue
+
+        court       = cols[2]
+        docket_no   = cols[3]
+        defendant   = cols[4]
+        case_name   = cols[5]
+        nature_suit = " ".join(cols[6].split())
+        cause       = cols[7]
+        complaint   = " ".join(cols[8].split()).lower()
+        date_hit    = cols[9]
+        date_filed  = cols[10]
 
         if complaint.startswith("free") and (allow_all_nature or nature_suit in ALLOW_NATURE):
             results.append({
@@ -143,6 +150,7 @@ def main():
         while True:
             all_results.extend(extract_results_from_table(page))
 
+            next_btn = page.locator("button.ln-pagination-next[aria-label='Next page']")
             if next_btn.count() == 0 or next_btn.is_disabled():
                 break
 
