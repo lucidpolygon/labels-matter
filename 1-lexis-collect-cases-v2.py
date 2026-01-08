@@ -50,6 +50,7 @@ def extract_results_from_table(page) -> list[dict]:
     for i in range(rows.count()):
         row = rows.nth(i)
         tds = row.locator("td")
+        row.scroll_into_view_if_needed(timeout=60_000)
 
         court        = tds.nth(2).inner_text().strip()
         docket_no    = tds.nth(3).inner_text().strip()
@@ -130,6 +131,9 @@ def main():
         party_only.set_checked(True, timeout=60_000)
 
         print("First Participant Checked")
+
+        rows = page.locator("table[ln-table] tbody tr:not(.filter-row)")
+        rows.first.wait_for(state="visible", timeout=90_000)
 
         # ---- extract + paginate ----
         all_results = []
