@@ -1,0 +1,17 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Env & secrets
+.env
+
+# Runtime state
+lexis_state.json
+filtered_results_*.json
+outputs/
+logs/
+other/
+
+.DS_Store
