@@ -3,7 +3,7 @@ import re
 import json
 import time
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -124,13 +124,16 @@ def send_rows_to_airtable(rows):
     
 def main():
     today = datetime.now()
-    if ALERT_FROM and ALERT_TO:
-        date_from = ALERT_FROM
-        date_to   = ALERT_TO
-    else:
-        date_from = today.strftime("%m/%d/%Y")
-        date_to   = today.strftime("%m/%d/%Y")
+    yesterday = today - timedelta(days=1)
 
+    if ALERT_FROM or ALERT_TO:
+        date_from = ALERT_FROM or yesterday.strftime("%m/%d/%Y")
+        date_to   = ALERT_TO   or yesterday.strftime("%m/%d/%Y")
+    else:
+        date_from = yesterday.strftime("%m/%d/%Y")
+        date_to   = yesterday.strftime("%m/%d/%Y")
+
+    print(date_from,date_to)
     playwright = sync_playwright().start()
     browser = None
 
