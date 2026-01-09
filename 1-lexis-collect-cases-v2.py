@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import requests
 from datetime import datetime
 from urllib.parse import urlsplit
 from dotenv import load_dotenv
@@ -18,15 +19,27 @@ LEXIS_USER = os.getenv("LEXIS_USER")
 LEXIS_PASS = os.getenv("LEXIS_PASS")
 
 ALERT_NAME = os.getenv("ALERT_NAME")
+ALERT_FROM = os.getenv("ALERT_FROM")
+ALERT_TO =os.getenv("ALERT_TO")
 ALLOW_NATURE = {
     x.strip()
     for x in os.getenv("FILTER_BY_CASE_NATURE", "").split(",")
     if x.strip()
 }
 
+AIRTABLE_TOKEN = os.environ["AIRTABLE_TOKEN"]
+AIRTABLE_BASE_ID = os.environ["AIRTABLE_BASE_ID"]
+AIRTABLE_TABLE = os.environ["AIRTABLE_TABLE"]
+
+AIRTABLE_URL = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE}"
+
 # ---------- helpers ----------
 def fmt_date(d: datetime) -> str:
     return d.strftime("%b %d, %Y")
+
+def chunked(lst, n=10):
+    for i in range(0, len(lst), n):
+        yield lst[i:i+n]
 
 def login_lexis(page, username: str, password: str):
     page.wait_for_selector("#userid", timeout=60_000)
@@ -85,10 +98,38 @@ def extract_results_from_table(page) -> list[dict]:
 
     return results
 
+def send_rows_to_airtable(rows):
+    """
+    rows: list[dict] where keys are Airtable field names.
+    """
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    created = 0
+    for batch in chunked(rows, 10):
+        # Airtable limit is 10 records/request
+        payload = {"records": [{"fields": r} for r in batch]}
+        resp = requests.post(AIRTABLE_URL, headers=headers, json=payload, timeout=30)
+
+        if resp.status_code >= 300:
+            raise RuntimeError(f"Airtable error {resp.status_code}: {resp.text}")
+
+        created += len(resp.json().get("records", []))
+        # be nice to rate limits (Render cron + Airtable free/team can be tight)
+        time.sleep(0.25)
+
+    return created
+    
 def main():
     today = datetime.now()
-    date_from = today.strftime("%m/%d/%Y")
-    date_to   = today.strftime("%m/%d/%Y")
+    if ALERT_FROM and ALERT_TO:
+        date_from = ALERT_FROM
+        date_to   = ALERT_TO
+    else:
+        date_from = today.strftime("%m/%d/%Y")
+        date_to   = today.strftime("%m/%d/%Y")
 
     playwright = sync_playwright().start()
     browser = None
@@ -168,16 +209,23 @@ def main():
                 timeout=60_000
             )
 
-        # dump correct var
-        safe_date = re.sub(r"[^0-9A-Za-z_-]", "_", date_to)
-        filename = f"filtered_results_{safe_date}.json"
-        tmp = filename + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(all_results, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, filename)
-
+        airtable_rows = []
+        for r in all_results:
+            airtable_rows.append({
+                "Court": r["court"],
+                "Docket Number": r["docket_number"],
+                "Defendant": r["defendant"],
+                "Case Name": r["case_name"],
+                "Nature of Suit": r["nature_of_suit"],
+                "Cause": r["cause"],
+                "Complaint": r["complaint"],
+                "Date Hit": r["date_hit"],
+                "Date Filed": r["date_filed"],
+                # "Key": r["key"],
+            })
+        created = send_rows_to_airtable(airtable_rows)
+        print("Sent rows to Airtable:", created)
         print("Filtered rows exported:", len(all_results))
-        print("Output file:", filename)
 
     finally:
         if browser:
