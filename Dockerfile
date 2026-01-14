@@ -7,7 +7,7 @@ WORKDIR /app
 COPY 1-lexis-collect-cases-v2.py /app/1-lexis-collect-cases-v2.py
 COPY 2-lexis-download-complaint.py /app/2-lexis-download-complaint.py
 
-RUN pip install --no-cache-dir python-dotenv requests boto3
+RUN pip install --no-cache-dir playwright python-dotenv requests boto3
 
 # default (can be overridden by Render Start Command)
 CMD ["python", "/app/1-lexis-collect-cases-v2.py"]
