@@ -160,6 +160,21 @@ def next_is_disabled(page) -> bool:
     aria_disabled = (btn.get_attribute("aria-disabled") or "").lower() == "true"
     return disabled_prop or aria_disabled
 
+def wait_alert_not_intercepting(page, timeout=180_000):
+    page.wait_for_function(
+        """
+        () => {
+          const el = document.querySelector("alert-loadbox ln-loading, ln-loading.alertLoading, alert-loadbox");
+          if (!el) return true;
+          const r = el.getBoundingClientRect();
+          const visible = r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
+          if (!visible) return true;
+          return getComputedStyle(el).pointerEvents === "none";
+        }
+        """,
+        timeout=timeout,
+    )
+    
 def click_next_page(page, timeout=120_000) -> bool:
     btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
     btn.wait_for(state="visible", timeout=timeout)
@@ -172,9 +187,13 @@ def click_next_page(page, timeout=120_000) -> bool:
         print("Next page is disabled (likely last page) — stopping pagination", flush=True)
         return False
 
-    # Click and wait for a load cycle (overlay appears then clears)
-    btn.click(timeout=30_000)
-    wait_alert_loading_clear(page, timeout=timeout)
+    try:
+        btn.click(timeout=10_000)
+    except Exception:
+        # overlay still flickering -> bypass pointer interception
+        btn.evaluate("el => el.click()")
+
+    wait_alert_not_intercepting(page, timeout=timeout)
     return True
 
 def send_rows_to_airtable(rows):
