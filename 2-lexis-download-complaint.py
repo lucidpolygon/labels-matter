@@ -71,6 +71,19 @@ def fetch_queue(limit, max_attempts=5):
     r.raise_for_status()
     return r.json().get("records", [])
 
+def fetch_by_record_ids(rec_ids):
+    records = []
+    for rec_id in rec_ids:
+        r = requests.get(
+            f"{AIRTABLE_URL}/{rec_id}",
+            headers=airtable_headers(),
+            timeout=30,
+        )
+        r.raise_for_status()
+        records.append(r.json())
+        time.sleep(0.25)
+    return records
+
 def load_state_from_r2(key="state/lexis_state.json") -> Optional[Dict]:
     try:
         obj = r2_client().get_object(Bucket=R2_BUCKET, Key=key)
@@ -160,6 +173,12 @@ def click_first_result_if_title_matches(page, expected_case_name: str) -> bool:
     # you’ll add the next actions after opening the case
     return True
 
+def is_complaint_text(txt: str) -> bool:
+    t = (txt or "").upper()
+    if "COMPLAINT" not in t:
+        return False
+    return True
+
 def click_free_complaint_row(page, timeout=60_000) -> bool:
     page.wait_for_selector("tr[data-proceedingnumber]", timeout=timeout)
     rows = page.locator("tr[data-proceedingnumber]")
@@ -178,7 +197,7 @@ def click_free_complaint_row(page, timeout=60_000) -> bool:
             continue
 
         txt = (text_td.inner_text() or "").strip()
-        if not txt.upper().startswith("COMPLAINT"):
+        if not is_complaint_text(txt):
             continue
 
         # The Free link does NOT navigate; it opens a modal.
@@ -348,29 +367,27 @@ def patch_airtable(rec_id: str, fields: dict):
 
 def try_get_complaint_pdf(context, page, docket, defendant, case_name, tries=3):
     last_err = None
-
     for attempt in range(1, tries + 1):
         try:
             print(f"attempt {attempt}/{tries}: open case + complaint", flush=True)
 
-            # hard reset to search each try (prevents stale SPA state)
             run_courtlink_search(page, docket, defendant)
 
-            pdf_url, pdf_bytes = try_get_complaint_pdf(context, page, docket, defendant, case_name, tries=3)
+            if not click_first_result_if_title_matches(page, case_name):
+                raise RuntimeError("Title mismatch / no matching result")
+
+            if not click_free_complaint_row(page):
+                raise RuntimeError("No FREE COMPLAINT row (or modal didn’t open)")
 
             return click_get_documents_and_fetch_pdf(context, page)
 
         except Exception as e:
             last_err = e
             print(f"retryable failure (attempt {attempt}/{tries}): {e}", flush=True)
-
-            # best-effort cleanup: close any open modal
             try:
                 page.keyboard.press("Escape")
             except Exception:
                 pass
-
-            # small backoff
             page.wait_for_timeout(1200)
 
     raise RuntimeError(f"Failed after {tries} attempts: {last_err}")
@@ -383,6 +400,9 @@ def main():
     signal.alarm(15 * 60)
 
     records = fetch_queue(limit=AIRTABLE_NO_OF_RECORDS_PER_CALL)
+    # records = fetch_by_record_ids([
+    #     "rec24zohw8IHCwgJk"
+    # ])
 
     if not records:
         print("No complaints to download.")
@@ -462,16 +482,7 @@ def main():
 
                 print(f"[{i}/{len(records)}] {docket} — {defendant}")
 
-                run_courtlink_search(page, docket, defendant)
-
-                if not click_first_result_if_title_matches(page, case_name):
-                    raise RuntimeError("Title mismatch / no matching result")
-
-                if not click_free_complaint_row(page):
-                    raise RuntimeError("No FREE COMPLAINT row (or modal didn’t open)")
-
-                pdf_url, pdf_bytes = click_get_documents_and_fetch_pdf(context, page)
-
+                pdf_url, pdf_bytes = try_get_complaint_pdf(context, page, docket, defendant, case_name, tries=3)
 
                 safe_docket = re.sub(r"[^A-Za-z0-9._-]+", "_", docket)
                 filename = f"{safe_docket}_complaint.pdf"
