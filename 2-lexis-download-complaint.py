@@ -345,6 +345,8 @@ def patch_airtable(rec_id: str, fields: dict):
 
 def main():
 
+    print("stage: start", flush=True)
+    
     signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(15 * 60)
 
@@ -354,10 +356,12 @@ def main():
         print("No complaints to download.")
         return
 
+    print(f"stage: fetched {len(records)} records", flush=True)
     playwright = sync_playwright().start()
     browser = None
 
     try:
+        print("stage: launching chromium", flush=True)
         browser = playwright.chromium.launch(
             headless=HEADLESS,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-popup-blocking", "--disable-features=IsolateOrigins,site-per-process"],
@@ -367,8 +371,11 @@ def main():
             accept_downloads=True,
             viewport={"width": 1280, "height": 720},
         )          
+        print("stage: chromium launched", flush=True)
+
         
         state = load_state_from_r2()
+        print("stage: state loaded", flush=True)
         if state:
             context = browser.new_context(storage_state=state, **context_kwargs)
         else:
