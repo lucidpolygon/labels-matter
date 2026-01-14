@@ -377,11 +377,10 @@ def main():
         state = load_state_from_r2()
         print("stage: state loaded", flush=True)
         
-        context = browser.new_context(**context_kwargs)
-        # if state:
-        #     context = browser.new_context(storage_state=state, **context_kwargs)
-        # else:
-        #     context = browser.new_context(**context_kwargs)
+        if state:
+            context = browser.new_context(storage_state=state, **context_kwargs)
+        else:
+            context = browser.new_context(**context_kwargs)
         
         page = context.new_page()
         page.goto(LEXIS_COURT_LINK, wait_until="domcontentloaded", timeout=60_000)
