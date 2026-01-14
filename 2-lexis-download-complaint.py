@@ -346,6 +346,35 @@ def patch_airtable(rec_id: str, fields: dict):
     r.raise_for_status()
     return r.json()
 
+def try_get_complaint_pdf(context, page, docket, defendant, case_name, tries=3):
+    last_err = None
+
+    for attempt in range(1, tries + 1):
+        try:
+            print(f"attempt {attempt}/{tries}: open case + complaint", flush=True)
+
+            # hard reset to search each try (prevents stale SPA state)
+            run_courtlink_search(page, docket, defendant)
+
+            pdf_url, pdf_bytes = try_get_complaint_pdf(context, page, docket, defendant, case_name, tries=3)
+
+            return click_get_documents_and_fetch_pdf(context, page)
+
+        except Exception as e:
+            last_err = e
+            print(f"retryable failure (attempt {attempt}/{tries}): {e}", flush=True)
+
+            # best-effort cleanup: close any open modal
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+
+            # small backoff
+            page.wait_for_timeout(1200)
+
+    raise RuntimeError(f"Failed after {tries} attempts: {last_err}")
+
 def main():
 
     print("stage: start", flush=True)
