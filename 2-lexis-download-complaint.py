@@ -6,8 +6,7 @@ import boto3
 import requests
 import signal
 from typing import Optional, Dict
-from datetime import datetime, timedelta
-from urllib.parse import urlsplit, urljoin
+from urllib.parse import urljoin
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from botocore.config import Config
@@ -25,13 +24,14 @@ LEXIS_SET_CLIENT_ID_LINK = "https://advance.lexis.com/clclientidset"
 AIRTABLE_TOKEN = os.environ["AIRTABLE_TOKEN"]
 AIRTABLE_BASE_ID = os.environ["AIRTABLE_BASE_ID"]
 AIRTABLE_TABLE = os.environ["AIRTABLE_TABLE"]
-AIRTABLE_NO_OF_RECORDS_PER_CALL = os.environ["AIRTABLE_NO_OF_RECORDS_PER_CALL"]
+AIRTABLE_NO_OF_RECORDS_PER_CALL = int(os.getenv("AIRTABLE_NO_OF_RECORDS_PER_CALL", "3"))
 
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY_ID = os.environ["R2_ACCESS_KEY_ID"]
 R2_SECRET_ACCESS_KEY = os.environ["R2_SECRET_ACCESS_KEY"]
 R2_BUCKET = os.environ["R2_BUCKET"]
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
+_R2 = None
 
 F_ATTEMPTS="Complaint Attempt Count"
 F_STATUS="Complaint Status"
@@ -52,7 +52,7 @@ def airtable_headers():
         "Content-Type": "application/json",
     }
 
-def fetch_queue(limit=AIRTABLE_NO_OF_RECORDS_PER_CALL, max_attempts=5):
+def fetch_queue(limit, max_attempts=5):
     # Complaint File empty + Status empty or Error + attempts < max_attempts
     # Note: Attachment emptiness checks are a bit awkward; this works well in practice:
     formula = (
@@ -308,14 +308,17 @@ def click_get_documents_and_fetch_pdf(context, page, timeout=180_000):
     raise TimeoutError("Clicked View but neither popup URL nor PDF response was observed.")
 
 def r2_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
-        aws_access_key_id=R2_ACCESS_KEY_ID,
-        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-        region_name="auto",
-        config=Config(signature_version="s3v4"),
-    )
+    global _R2
+    if _R2 is None:
+        _R2 = boto3.client(
+            "s3",
+            endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+    return _R2
 
 def upload_pdf_to_r2_and_get_url(key: str, data: bytes) -> str:
     s3 = r2_client()
@@ -350,7 +353,7 @@ def main():
     signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(15 * 60)
 
-    records = fetch_queue(limit=10)
+    records = fetch_queue(limit=AIRTABLE_NO_OF_RECORDS_PER_CALL)
 
     if not records:
         print("No complaints to download.")
@@ -465,11 +468,12 @@ def main():
 
     finally:
         signal.alarm(0)
-        if browser:
-            #time.sleep(90)            
-            browser.close()        
-            print("Done!")
+        try:
+            if browser:
+                browser.close()
+        finally:
             playwright.stop()
+        print("Done!")
 
 if __name__ == "__main__":
     main()
