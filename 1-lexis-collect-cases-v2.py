@@ -138,6 +138,33 @@ def extract_results_from_table(page) -> list[dict]:
             })
 
     return results
+def wait_alert_loading_clear(page, timeout=120_000):
+    # This is the thing intercepting clicks per your log
+    loader = page.locator("alert-loadbox ln-loading, ln-loading.alertLoading, alert-loadbox")
+    try:
+        loader.first.wait_for(state="hidden", timeout=timeout)
+    except Exception:
+        # sometimes it gets removed instead of hidden
+        pass
+
+def click_next_page(page, timeout=120_000):
+    next_btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
+
+    # wait for any pending load to finish
+    wait_alert_loading_clear(page, timeout=timeout)
+
+    # ensure enabled (not disabled attribute)
+    page.wait_for_function(
+        """(el) => el && !el.disabled && el.getAttribute('aria-disabled') !== 'true'""",
+        arg=next_btn,
+        timeout=timeout,
+    )
+
+    # click and then wait for load to start/finish
+    next_btn.click(timeout=30_000)
+
+    # after click, Lexis shows the loadbox again — wait it out
+    wait_alert_loading_clear(page, timeout=timeout)
 
 def send_rows_to_airtable(rows):
     """
@@ -206,6 +233,11 @@ def main():
             context = browser.new_context(**context_kwargs)
 
         page = context.new_page()
+
+        # Render is slower. Increase your Playwright default timeout in Render. No need locally
+        page.set_default_timeout(120_000)
+        page.set_default_navigation_timeout(120_000)
+
         page.goto(COURT_LINK, wait_until="domcontentloaded", timeout=60_000)
 
         if not is_logged_in(page):
@@ -261,7 +293,7 @@ def main():
             rows.first.wait_for(state="visible", timeout=60_000)
             prev_first = rows.nth(0).inner_text()
 
-            next_btn.click()
+            click_next_page(page)
 
             page.wait_for_function(
                 """(prev) => {
