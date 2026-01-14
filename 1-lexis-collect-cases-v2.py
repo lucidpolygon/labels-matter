@@ -2,21 +2,31 @@ import os
 import re
 import json
 import time
+import boto3
 import requests
+import signal
+from typing import Optional, Dict
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from botocore.config import Config
 
 load_dotenv()
 
 HEADLESS = os.getenv("HEADLESS", "true").lower() == "true"
 
-STATE_FILE = "lexis_state.json"
 COURT_LINK  = os.getenv("LEXIS_URL")
 LEXIS_ALERTS_URL = os.getenv("LEXIS_ALERTS_URL")
 LEXIS_USER = os.getenv("LEXIS_USER")
 LEXIS_PASS = os.getenv("LEXIS_PASS")
+
+R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
+R2_ACCESS_KEY_ID = os.environ["R2_ACCESS_KEY_ID"]
+R2_SECRET_ACCESS_KEY = os.environ["R2_SECRET_ACCESS_KEY"]
+R2_BUCKET = os.environ["R2_BUCKET"]
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
+_R2 = None
 
 ALERT_NAME = os.getenv("ALERT_NAME")
 ALERT_FROM = os.getenv("ALERT_FROM")
@@ -34,6 +44,37 @@ AIRTABLE_TABLE = os.environ["AIRTABLE_TABLE"]
 AIRTABLE_URL = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE}"
 
 # ---------- helpers ----------
+def _timeout_handler(signum, frame):
+    raise TimeoutError("Global scrape timeout hit")
+
+def r2_client():
+    global _R2
+    if _R2 is None:
+        _R2 = boto3.client(
+            "s3",
+            endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=R2_ACCESS_KEY_ID,
+            aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+    return _R2
+
+def load_state_from_r2(key="state/lexis_state.json") -> Optional[Dict]:
+    try:
+        obj = r2_client().get_object(Bucket=R2_BUCKET, Key=key)
+        return json.loads(obj["Body"].read().decode("utf-8"))
+    except Exception:
+        return None
+
+def save_state_to_r2(state: dict, key="state/lexis_state.json"):
+    r2_client().put_object(
+        Bucket=R2_BUCKET,
+        Key=key,
+        Body=json.dumps(state).encode("utf-8"),
+        ContentType="application/json",
+    )
+
 def fmt_date(d: datetime) -> str:
     return d.strftime("%b %d, %Y")
 
@@ -123,6 +164,11 @@ def send_rows_to_airtable(rows):
     return created
     
 def main():
+
+    print("stage: start", flush=True)
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(15 * 60)
+
     today = datetime.now()
     yesterday = today - timedelta(days=1)
 
@@ -138,12 +184,26 @@ def main():
     browser = None
 
     try:
-        browser = playwright.chromium.launch(headless=HEADLESS)            
-        context = (
-            browser.new_context(storage_state=STATE_FILE, accept_downloads=True)
-            if os.path.exists(STATE_FILE)
-            else browser.new_context(accept_downloads=True)
-        )
+        print("stage: launching chromium", flush=True)
+        browser = playwright.chromium.launch(
+            headless=HEADLESS,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-popup-blocking", "--disable-features=IsolateOrigins,site-per-process"],
+        ) 
+
+        context_kwargs = dict(
+            accept_downloads=True,
+            viewport={"width": 1280, "height": 720},
+        )           
+        
+        print("stage: chromium launched", flush=True)        
+
+        state = load_state_from_r2()
+        print("stage: state loaded", flush=True)
+
+        if state:
+            context = browser.new_context(storage_state=state, **context_kwargs)
+        else:
+            context = browser.new_context(**context_kwargs)
 
         page = context.new_page()
         page.goto(COURT_LINK, wait_until="domcontentloaded", timeout=60_000)
@@ -155,7 +215,7 @@ def main():
             login_lexis(page, LEXIS_USER, LEXIS_PASS)
             page.wait_for_url(f"{COURT_LINK}*", timeout=120_000)            
             page.wait_for_function("() => !document.querySelector('#password')", timeout=120_000)
-            context.storage_state(path=STATE_FILE)
+            save_state_to_r2(context.storage_state())
 
         print("Login Done")
 
@@ -231,11 +291,14 @@ def main():
         print("Filtered rows exported:", len(all_results))
 
     finally:
-        if browser:
-            #time.sleep(90)
-            browser.close()        
-            print("Done!")
+        #time.sleep(90)
+        signal.alarm(0)
+        try:
+            if browser:
+                browser.close()
+        finally:
             playwright.stop()
+        print("Done!")
 
 if __name__ == "__main__":
     main()
