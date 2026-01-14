@@ -139,63 +139,6 @@ def extract_results_from_table(page) -> list[dict]:
 
     return results
 
-def wait_alert_loading_clear(page, timeout=120_000):
-    loader = page.locator("alert-loadbox ln-loading, ln-loading.alertLoading, alert-loadbox")
-    # wait for loader to disappear (hidden OR detached)
-    try:
-        loader.first.wait_for(state="hidden", timeout=timeout)
-    except Exception:
-        try:
-            loader.first.wait_for(state="detached", timeout=timeout)
-        except Exception:
-            pass
-
-def next_is_disabled(page) -> bool:
-    btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
-    print("Next disabled?", btn.evaluate("el => el.disabled"), "aria-disabled=", btn.get_attribute("aria-disabled"), flush=True)
-    if btn.count() == 0:
-        return True
-    # check disabled + aria-disabled
-    disabled_prop = btn.evaluate("el => !!el.disabled")
-    aria_disabled = (btn.get_attribute("aria-disabled") or "").lower() == "true"
-    return disabled_prop or aria_disabled
-
-def wait_alert_not_intercepting(page, timeout=180_000):
-    page.wait_for_function(
-        """
-        () => {
-          const el = document.querySelector("alert-loadbox ln-loading, ln-loading.alertLoading, alert-loadbox");
-          if (!el) return true;
-          const r = el.getBoundingClientRect();
-          const visible = r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
-          if (!visible) return true;
-          return getComputedStyle(el).pointerEvents === "none";
-        }
-        """,
-        timeout=timeout,
-    )
-    
-def click_next_page(page, timeout=120_000) -> bool:
-    btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
-    btn.wait_for(state="visible", timeout=timeout)
-
-    # Let any ongoing load finish first
-    wait_alert_loading_clear(page, timeout=timeout)
-
-    # If it’s disabled now, that usually means “no next page”.
-    if next_is_disabled(page):
-        print("Next page is disabled (likely last page) — stopping pagination", flush=True)
-        return False
-
-    try:
-        btn.click(timeout=10_000)
-    except Exception:
-        # overlay still flickering -> bypass pointer interception
-        btn.evaluate("el => el.click()")
-
-    wait_alert_not_intercepting(page, timeout=timeout)
-    return True
-
 def send_rows_to_airtable(rows):
     """
     rows: list[dict] where keys are Airtable field names.
@@ -219,7 +162,52 @@ def send_rows_to_airtable(rows):
         time.sleep(0.25)
 
     return created
-    
+
+def has_next_page(page) -> bool:
+    btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
+    if btn.count() == 0:
+        return False
+    # matches your HTML snippets exactly
+    return btn.get_attribute("disabled") is None
+
+def wait_alert_not_blocking(page, timeout=180_000):
+    # Wait until the loader isn't blocking pointer events (or doesn't exist / not visible)
+    page.wait_for_function(
+        """
+        () => {
+          const el = document.querySelector("alert-loadbox ln-loading, ln-loading.alertLoading, alert-loadbox");
+          if (!el) return true;
+          const r = el.getBoundingClientRect();
+          const visible = r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden";
+          if (!visible) return true;
+          return getComputedStyle(el).pointerEvents === "none";
+        }
+        """,
+        timeout=timeout,
+    )
+
+def click_next_page(page, timeout=180_000) -> bool:
+    btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
+    if btn.count() == 0:
+        return False
+
+    # Wait out Lexis loadbox before attempting the click
+    wait_alert_not_blocking(page, timeout=timeout)
+
+    # Re-check right before clicking
+    if btn.get_attribute("disabled") is not None:
+        return False
+
+    try:
+        btn.click(timeout=10_000)
+    except Exception:
+        # bypass "intercepts pointer events" (pointer interception doesn't block JS click)
+        btn.evaluate("el => el.click()")
+
+    # After click, Lexis loads again
+    wait_alert_not_blocking(page, timeout=timeout)
+    return True
+
 def main():
 
     print("stage: start", flush=True)
