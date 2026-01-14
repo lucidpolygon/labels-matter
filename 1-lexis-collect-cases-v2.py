@@ -138,33 +138,44 @@ def extract_results_from_table(page) -> list[dict]:
             })
 
     return results
+
 def wait_alert_loading_clear(page, timeout=120_000):
-    # This is the thing intercepting clicks per your log
     loader = page.locator("alert-loadbox ln-loading, ln-loading.alertLoading, alert-loadbox")
+    # wait for loader to disappear (hidden OR detached)
     try:
         loader.first.wait_for(state="hidden", timeout=timeout)
     except Exception:
-        # sometimes it gets removed instead of hidden
-        pass
+        try:
+            loader.first.wait_for(state="detached", timeout=timeout)
+        except Exception:
+            pass
 
-def click_next_page(page, timeout=120_000):
-    next_btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
+def next_is_disabled(page) -> bool:
+    btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
+    print("Next disabled?", btn.evaluate("el => el.disabled"), "aria-disabled=", btn.get_attribute("aria-disabled"), flush=True)
+    if btn.count() == 0:
+        return True
+    # check disabled + aria-disabled
+    disabled_prop = btn.evaluate("el => !!el.disabled")
+    aria_disabled = (btn.get_attribute("aria-disabled") or "").lower() == "true"
+    return disabled_prop or aria_disabled
 
-    # wait for any pending load to finish
+def click_next_page(page, timeout=120_000) -> bool:
+    btn = page.locator("button.ln-pagination-next[aria-label='Next page']").first
+    btn.wait_for(state="visible", timeout=timeout)
+
+    # Let any ongoing load finish first
     wait_alert_loading_clear(page, timeout=timeout)
 
-    # ensure enabled (not disabled attribute)
-    page.wait_for_function(
-        """(el) => el && !el.disabled && el.getAttribute('aria-disabled') !== 'true'""",
-        arg=next_btn,
-        timeout=timeout,
-    )
+    # If it’s disabled now, that usually means “no next page”.
+    if next_is_disabled(page):
+        print("Next page is disabled (likely last page) — stopping pagination", flush=True)
+        return False
 
-    # click and then wait for load to start/finish
-    next_btn.click(timeout=30_000)
-
-    # after click, Lexis shows the loadbox again — wait it out
+    # Click and wait for a load cycle (overlay appears then clears)
+    btn.click(timeout=30_000)
     wait_alert_loading_clear(page, timeout=timeout)
+    return True
 
 def send_rows_to_airtable(rows):
     """
@@ -293,7 +304,8 @@ def main():
             rows.first.wait_for(state="visible", timeout=60_000)
             prev_first = rows.nth(0).inner_text()
 
-            click_next_page(page)
+            if not click_next_page(page):
+                break
 
             page.wait_for_function(
                 """(prev) => {
