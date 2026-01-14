@@ -25,6 +25,7 @@ LEXIS_SET_CLIENT_ID_LINK = "https://advance.lexis.com/clclientidset"
 AIRTABLE_TOKEN = os.environ["AIRTABLE_TOKEN"]
 AIRTABLE_BASE_ID = os.environ["AIRTABLE_BASE_ID"]
 AIRTABLE_TABLE = os.environ["AIRTABLE_TABLE"]
+AIRTABLE_NO_OF_RECORDS_PER_CALL = os.environ["AIRTABLE_NO_OF_RECORDS_PER_CALL"]
 
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY_ID = os.environ["R2_ACCESS_KEY_ID"]
@@ -51,7 +52,7 @@ def airtable_headers():
         "Content-Type": "application/json",
     }
 
-def fetch_queue(limit=10, max_attempts=5):
+def fetch_queue(limit=AIRTABLE_NO_OF_RECORDS_PER_CALL, max_attempts=5):
     # Complaint File empty + Status empty or Error + attempts < max_attempts
     # Note: Attachment emptiness checks are a bit awkward; this works well in practice:
     formula = (
