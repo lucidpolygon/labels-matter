@@ -23,7 +23,7 @@ LEXIS_SET_CLIENT_ID_LINK = "https://advance.lexis.com/clclientidset"
 
 AIRTABLE_TOKEN = os.environ["AIRTABLE_TOKEN"]
 AIRTABLE_BASE_ID = os.environ["AIRTABLE_BASE_ID"]
-AIRTABLE_TABLE = os.environ["AIRTABLE_TABLE"]
+AIRTABLE_TABLE = os.environ["AIRTABLE_LEXIS_TABLE"]
 AIRTABLE_NO_OF_RECORDS_PER_CALL = int(os.getenv("AIRTABLE_NO_OF_RECORDS_PER_CALL", "3"))
 
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
