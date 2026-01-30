@@ -20,6 +20,7 @@ COURT_LINK  = os.getenv("LEXIS_URL")
 LEXIS_ALERTS_URL = os.getenv("LEXIS_ALERTS_URL")
 LEXIS_USER = os.getenv("LEXIS_USER")
 LEXIS_PASS = os.getenv("LEXIS_PASS")
+LEXIS_SET_CLIENT_ID_LINK = "https://advance.lexis.com/clclientidset"
 
 R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
 R2_ACCESS_KEY_ID = os.environ["R2_ACCESS_KEY_ID"]
@@ -28,12 +29,12 @@ R2_BUCKET = os.environ["R2_BUCKET"]
 R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
 _R2 = None
 
-ALERT_NAME = os.getenv("ALERT_NAME")
-ALERT_FROM = os.getenv("ALERT_FROM")
-ALERT_TO =os.getenv("ALERT_TO")
+ALERT_NAME = os.getenv("LEXIS_ALERT_NAME")
+ALERT_FROM = os.getenv("LEXIS_ALERT_FROM")
+ALERT_TO =os.getenv("LEXIS_ALERT_TO")
 ALLOW_NATURE = {
     x.strip()
-    for x in os.getenv("FILTER_BY_CASE_NATURE", "").split(",")
+    for x in os.getenv("LEXIS_FILTER_BY_CASE_NATURE", "").split(",")
     if x.strip()
 }
 
@@ -268,6 +269,22 @@ def main():
             save_state_to_r2(context.storage_state())
 
         print("Login Done")
+
+        page.goto(LEXIS_SET_CLIENT_ID_LINK, wait_until="domcontentloaded", timeout=60_000)
+
+        page.locator("#recent").check()
+
+        client_select = page.locator("select.clientIds")
+        client_select.wait_for(state="visible", timeout=30_000)
+
+        current = client_select.input_value()
+        if current != "Office":
+            client_select.select_option(value="Office")
+        
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=60_000):
+            page.locator("input.submit-client").click()
+
+        print("Client Set")
 
         page.goto(LEXIS_ALERTS_URL, wait_until="domcontentloaded")
         page.wait_for_selector(f"a:has-text('{ALERT_NAME}')", timeout=60000)
