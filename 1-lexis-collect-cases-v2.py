@@ -277,10 +277,18 @@ def main():
         client_select = page.locator("select.clientIds")
         client_select.wait_for(state="visible", timeout=30_000)
 
-        current = client_select.input_value()
-        if current != "Office":
-            client_select.select_option(value="Office")
-        
+        office_option = client_select.locator("option[value='Office']")
+                
+        if office_option.count() > 0:
+            current = client_select.input_value()
+            if current != "Office":
+                client_select.select_option(value="Office")
+        else:
+            page.locator("input#client").check()
+            new_client_input = page.locator("input[name='client']")
+            new_client_input.wait_for(state="visible", timeout=30_000)
+            new_client_input.fill("Office")
+
         with page.expect_navigation(wait_until="domcontentloaded", timeout=60_000):
             page.locator("input.submit-client").click()
 
