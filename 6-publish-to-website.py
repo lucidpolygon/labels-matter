@@ -229,7 +229,7 @@ def wp_get_or_create_term(kind: str, name: str) -> Optional[int]:
         raise RuntimeError(f"WP term create failed: {r.status_code} {r.text}")
     return int(r.json()["id"])
 
-def wp_upload_featured_image(image_bytes: bytes, filename: str) -> int:
+def wp_upload_featured_image(image_bytes: bytes, filename: str, alt_text: str = "") -> int:
     content_type, _ = mimetypes.guess_type(filename)
     if not content_type:
         content_type = "image/jpeg"
@@ -252,7 +252,7 @@ def wp_upload_featured_image(image_bytes: bytes, filename: str) -> int:
             json={"alt_text": alt_text}
         )
     
-    return int(r.json()["id"])
+    return media_id
 
 def wp_create_post(title: str, content_html: str, excerpt: str,
                    category_ids: List[int], tag_ids: List[int],
@@ -324,7 +324,7 @@ def process_record(record: Dict) -> None:
     tag_ids: List[int] = []
     for t in tags[:20]:
         term_id = wp_get_or_create_term("tag", t)
-        if term_id:
+        if term_id and term_id not in tag_ids:
             tag_ids.append(term_id)
 
     # Create WP post
